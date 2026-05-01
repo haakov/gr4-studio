@@ -2,6 +2,7 @@ const DEFAULT_CONTROL_PLANE_BASE_URL = 'http://127.0.0.1:8080';
 
 export type ConfigSource = 'default' | 'env' | 'desktop';
 export type BackendMode = 'local' | 'remote' | 'unknown';
+export type ControlPlaneMode = 'http' | 'wasm';
 
 export type ConfigIssue = {
   key: 'VITE_CONTROL_PLANE_BASE_URL' | 'GR4_STUDIO_CONTROL_PLANE_BASE_URL';
@@ -11,6 +12,7 @@ export type ConfigIssue = {
 
 export type AppConfig = {
   controlPlaneBaseUrl: string;
+  controlPlaneMode: ControlPlaneMode;
   backendMode: BackendMode;
   source: ConfigSource;
   issues: ConfigIssue[];
@@ -69,15 +71,21 @@ export function readDesktopRuntimeConfig(): DesktopRuntimeConfig | undefined {
   return window.gr4StudioRuntime;
 }
 
-export function resolveAppConfig(envBaseUrl?: string): AppConfig {
+export function resolveControlPlaneMode(envMode?: string): ControlPlaneMode {
+  return envMode?.trim().toLowerCase() === 'wasm' ? 'wasm' : 'http';
+}
+
+export function resolveAppConfig(envBaseUrl?: string, envMode?: string): AppConfig {
   const desktopConfig = readDesktopRuntimeConfig();
   const desktopBaseUrl = desktopConfig?.controlPlaneBaseUrl;
   const desktopBackendMode = desktopConfig?.backendMode ?? 'unknown';
+  const controlPlaneMode = resolveControlPlaneMode(envMode);
 
   if (desktopBaseUrl) {
     const normalized = normalizeControlPlaneBaseUrl(desktopBaseUrl, 'GR4_STUDIO_CONTROL_PLANE_BASE_URL');
     return {
       controlPlaneBaseUrl: normalized.value,
+      controlPlaneMode,
       backendMode: desktopBackendMode,
       source: normalized.source,
       issues: normalized.issues,
@@ -87,6 +95,7 @@ export function resolveAppConfig(envBaseUrl?: string): AppConfig {
   const envResolved = normalizeControlPlaneBaseUrl(envBaseUrl, 'VITE_CONTROL_PLANE_BASE_URL');
   return {
     controlPlaneBaseUrl: envResolved.value,
+    controlPlaneMode,
     backendMode: 'unknown',
     source: envResolved.source,
     issues: envResolved.issues,

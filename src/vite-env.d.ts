@@ -2,6 +2,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_CONTROL_PLANE_BASE_URL?: string;
+  readonly VITE_CONTROL_PLANE_MODE?: string;
 }
 
 interface ImportMeta {

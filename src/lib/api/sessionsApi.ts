@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import {
-  sessionDeleteResponseSchema,
   sessionDtoSchema,
   sessionListResponseSchema,
   sessionResponseSchema,
@@ -8,6 +7,8 @@ import {
   type SessionStreamDto,
 } from '../dto/sessions';
 import { ApiClientError, jsonRequest } from './client';
+import { getControlPlane } from '../wasm/controlPlane';
+import { config } from '../config';
 
 export type SessionStateValue = 'stopped' | 'running' | 'error';
 
@@ -88,72 +89,104 @@ function unwrapSessionResponse(payload: unknown, context: string): SessionRecord
 }
 
 export async function createSession(input: CreateSessionInput): Promise<SessionRecord> {
+  if (config.controlPlaneMode === 'wasm') {
+    const cp = await getControlPlane();
+    return unwrapSessionResponse(JSON.parse(cp.createSession(input.name, input.grc)), 'create-session');
+  }
+
   const payload = await jsonRequest<unknown>({
     path: '/sessions',
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
-
   return unwrapSessionResponse(payload, 'create-session');
 }
 
 export async function listSessions(): Promise<SessionRecord[]> {
-  const payload = await jsonRequest<unknown>({
-    path: '/sessions',
-    method: 'GET',
-  });
+  if (config.controlPlaneMode === 'wasm') {
+    const cp = await getControlPlane();
+    const parsed = parseOrThrow(sessionListResponseSchema, JSON.parse(cp.listSessions()), 'list-sessions');
+    const sessions = Array.isArray(parsed) ? parsed : parsed.sessions;
+    return sessions.map(mapSession);
+  }
+
+  const payload = await jsonRequest<unknown>({ path: '/sessions', method: 'GET' });
   const parsed = parseOrThrow(sessionListResponseSchema, payload, 'list-sessions');
   const sessions = Array.isArray(parsed) ? parsed : parsed.sessions;
   return sessions.map(mapSession);
 }
 
 export async function getSession(sessionId: string): Promise<SessionRecord> {
+  if (config.controlPlaneMode === 'wasm') {
+    const cp = await getControlPlane();
+    return unwrapSessionResponse(JSON.parse(cp.getSession(sessionId)), 'get-session');
+  }
+
   const payload = await jsonRequest<unknown>({
     path: `/sessions/${encodeURIComponent(sessionId)}`,
     method: 'GET',
   });
-
   return unwrapSessionResponse(payload, 'get-session');
 }
 
 export async function startSession(sessionId: string): Promise<SessionRecord> {
+  if (config.controlPlaneMode === 'wasm') {
+    const cp = await getControlPlane();
+    return unwrapSessionResponse(JSON.parse(cp.startSession(sessionId)), 'start-session');
+  }
+
   const payload = await jsonRequest<unknown>({
     path: `/sessions/${encodeURIComponent(sessionId)}/start`,
     method: 'POST',
   });
-
   return unwrapSessionResponse(payload, 'start-session');
 }
 
 export async function stopSession(sessionId: string): Promise<SessionRecord> {
+  if (config.controlPlaneMode === 'wasm') {
+    const cp = await getControlPlane();
+    return unwrapSessionResponse(JSON.parse(cp.stopSession(sessionId)), 'stop-session');
+  }
+
   const payload = await jsonRequest<unknown>({
     path: `/sessions/${encodeURIComponent(sessionId)}/stop`,
     method: 'POST',
   });
-
   return unwrapSessionResponse(payload, 'stop-session');
 }
 
 export async function restartSession(sessionId: string): Promise<SessionRecord> {
+  if (config.controlPlaneMode === 'wasm') {
+    const cp = await getControlPlane();
+    return unwrapSessionResponse(JSON.parse(cp.restartSession(sessionId)), 'restart-session');
+  }
+
   const payload = await jsonRequest<unknown>({
     path: `/sessions/${encodeURIComponent(sessionId)}/restart`,
     method: 'POST',
   });
-
   return unwrapSessionResponse(payload, 'restart-session');
 }
 
 export async function deleteSession(sessionId: string): Promise<{ deleted: boolean }> {
+  if (config.controlPlaneMode === 'wasm') {
+    const cp = await getControlPlane();
+    cp.deleteSession(sessionId);
+    return { deleted: true };
+  }
+
   const payload = await jsonRequest<unknown>({
     path: `/sessions/${encodeURIComponent(sessionId)}`,
     method: 'DELETE',
   });
-
-  const parsed = parseOrThrow(sessionDeleteResponseSchema, payload, 'delete-session');
-  return {
-    deleted: Boolean(parsed?.deleted ?? parsed?.success ?? true),
-  };
+  const parsed = parseOrThrow(
+    z.union([
+      z.object({ deleted: z.boolean().optional(), success: z.boolean().optional() }).passthrough(),
+      z.object({}).passthrough(),
+    ]).optional(),
+    payload,
+    'delete-session',
+  );
+  return { deleted: Boolean(parsed?.deleted ?? parsed?.success ?? true) };
 }

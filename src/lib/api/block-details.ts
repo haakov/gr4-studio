@@ -7,6 +7,8 @@ import {
   type PortMetaDto,
 } from '../dto/block-details';
 import { isReadOnlyRuntimeMutability } from '../utils/parameter-groups';
+import { getControlPlane } from '../wasm/controlPlane';
+import { config } from '../config';
 
 export type BlockParameterMeta = {
   name: string;
@@ -127,36 +129,38 @@ function mapBlockDetailsDto(dto: BlockDetailsDto): BlockDetails {
   };
 }
 
-export async function getBlockDetails(blockTypeId: string): Promise<BlockDetails> {
-  const payload = await jsonRequest<unknown>({
-    path: `/blocks/${encodeURIComponent(blockTypeId)}`,
-    method: 'GET',
-  });
-
+function parseBlockDetails(payload: unknown): BlockDetails {
   const parsed = blockDetailsResponseSchema.safeParse(payload);
   if (!parsed.success) {
     const schemaIssue = parsed.error.issues
       .map((issue) => `${issue.path.join('.') || 'root'}: ${issue.message}`)
       .join('; ');
-
     throw new ApiClientError('Block detail response schema mismatch', 'PARSE', undefined, schemaIssue);
   }
 
-  let body: BlockDetailsDto;
   if ('block' in parsed.data) {
     const nestedBlock = blockDetailsDtoSchema.safeParse(parsed.data.block);
     if (!nestedBlock.success) {
       const nestedIssue = nestedBlock.error.issues
         .map((issue) => `${issue.path.join('.') || 'root'}: ${issue.message}`)
         .join('; ');
-
       throw new ApiClientError('Block detail nested payload schema mismatch', 'PARSE', undefined, nestedIssue);
     }
-
-    body = nestedBlock.data;
-  } else {
-    body = parsed.data;
+    return mapBlockDetailsDto(nestedBlock.data);
   }
 
-  return mapBlockDetailsDto(body);
+  return mapBlockDetailsDto(parsed.data);
+}
+
+export async function getBlockDetails(blockTypeId: string): Promise<BlockDetails> {
+  if (config.controlPlaneMode === 'wasm') {
+    const cp = await getControlPlane();
+    return parseBlockDetails(JSON.parse(cp.getBlock(blockTypeId)));
+  }
+
+  const payload = await jsonRequest<unknown>({
+    path: `/blocks/${encodeURIComponent(blockTypeId)}`,
+    method: 'GET',
+  });
+  return parseBlockDetails(payload);
 }

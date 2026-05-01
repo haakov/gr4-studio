@@ -6,6 +6,8 @@ import {
   type BlockSummaryDto,
 } from '../dto/blocks';
 import { ApiClientError, jsonRequest } from './client';
+import { getControlPlane } from '../wasm/controlPlane';
+import { config } from '../config';
 
 export type BlockCatalogItem = {
   blockTypeId: string;
@@ -92,16 +94,20 @@ function mapBlock(dto: BlockSummaryDto): BlockCatalogItem {
   };
 }
 
-export async function getBlocks(): Promise<BlockCatalogItem[]> {
-  const payload = await jsonRequest<unknown>({
-    path: '/blocks',
-    method: 'GET',
-  });
-
+function parseAndMap(payload: unknown): BlockCatalogItem[] {
   const parsed = parseBlocksPayload(payload);
   if (!parsed.success) {
     throw new ApiClientError('Block response schema mismatch', 'PARSE', undefined, parsed.details);
   }
-
   return normalizeItems(parsed.data).map(mapBlock);
+}
+
+export async function getBlocks(): Promise<BlockCatalogItem[]> {
+  if (config.controlPlaneMode === 'wasm') {
+    const cp = await getControlPlane();
+    return parseAndMap(JSON.parse(cp.listBlocks()));
+  }
+
+  const payload = await jsonRequest<unknown>({ path: '/blocks', method: 'GET' });
+  return parseAndMap(payload);
 }

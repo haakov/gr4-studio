@@ -1,4 +1,6 @@
 import { ApiClientError, jsonRequest } from './client';
+import { getControlPlane } from '../wasm/controlPlane';
+import { config } from '../config';
 
 export type RuntimeSettingsScalar = string | number | boolean | null;
 export type RuntimeSettingsValue =
@@ -16,26 +18,14 @@ export type SetBlockSettingsResult = {
 };
 
 function isRuntimeSettingsValue(value: unknown): value is RuntimeSettingsValue {
-  if (value === null) {
-    return true;
-  }
-
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return true;
-  }
-
-  if (Array.isArray(value) || typeof value !== 'object') {
-    return false;
-  }
-
+  if (value === null) return true;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return true;
+  if (Array.isArray(value) || typeof value !== 'object') return false;
   return Object.values(value).every(isRuntimeSettingsValue);
 }
 
 function isRuntimeSettingsObject(value: unknown): value is RuntimeSettingsObject {
-  if (!value || Array.isArray(value) || typeof value !== 'object') {
-    return false;
-  }
-
+  if (!value || Array.isArray(value) || typeof value !== 'object') return false;
   return Object.values(value).every(isRuntimeSettingsValue);
 }
 
@@ -43,51 +33,14 @@ function parseRuntimeSettingsObject(payload: unknown, context: string): RuntimeS
   if (!isRuntimeSettingsObject(payload)) {
     throw new ApiClientError(`Runtime settings API schema mismatch (${context})`, 'PARSE');
   }
-
   return payload;
 }
 
-export async function getBlockSettings(sessionId: string, uniqueName: string): Promise<RuntimeSettingsObject> {
-  const payload = await jsonRequest<unknown>({
-    path: `/sessions/${encodeURIComponent(sessionId)}/blocks/${encodeURIComponent(uniqueName)}/settings`,
-    method: 'GET',
-  });
-
-  if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
-    throw new ApiClientError('Runtime settings API schema mismatch (get-block-settings)', 'PARSE');
-  }
-
-  const settings = (payload as { settings?: unknown }).settings;
-  return parseRuntimeSettingsObject(settings, 'get-block-settings.settings');
-}
-
-export async function setBlockSettings(
-  sessionId: string,
-  uniqueName: string,
-  patch: RuntimeSettingsObject,
-  mode: RuntimeSettingsMode = 'staged',
-): Promise<SetBlockSettingsResult> {
-  const query = mode === 'immediate' ? '?mode=immediate' : '';
-  const payload = await jsonRequest<unknown>({
-    path: `/sessions/${encodeURIComponent(sessionId)}/blocks/${encodeURIComponent(uniqueName)}/settings${query}`,
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(patch),
-  });
-
+function parseSetBlockSettingsResult(payload: unknown): SetBlockSettingsResult {
   if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
     throw new ApiClientError('Runtime settings API schema mismatch (set-block-settings)', 'PARSE');
   }
-
-  const parsed = payload as {
-    session_id?: unknown;
-    block?: unknown;
-    applied_via?: unknown;
-    accepted?: unknown;
-  };
-
+  const parsed = payload as { session_id?: unknown; block?: unknown; applied_via?: unknown; accepted?: unknown };
   if (
     typeof parsed.session_id !== 'string' ||
     typeof parsed.block !== 'string' ||
@@ -96,11 +49,51 @@ export async function setBlockSettings(
   ) {
     throw new ApiClientError('Runtime settings API schema mismatch (set-block-settings)', 'PARSE');
   }
-
   return {
     sessionId: parsed.session_id,
     block: parsed.block,
     appliedVia: parsed.applied_via,
     accepted: parsed.accepted,
   };
+}
+
+export async function getBlockSettings(sessionId: string, uniqueName: string): Promise<RuntimeSettingsObject> {
+  if (config.controlPlaneMode === 'wasm') {
+    const cp = await getControlPlane();
+    const payload = JSON.parse(cp.getBlockSettings(sessionId, uniqueName));
+    if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
+      throw new ApiClientError('Runtime settings API schema mismatch (get-block-settings)', 'PARSE');
+    }
+    return parseRuntimeSettingsObject((payload as { settings?: unknown }).settings, 'get-block-settings.settings');
+  }
+
+  const payload = await jsonRequest<unknown>({
+    path: `/sessions/${encodeURIComponent(sessionId)}/blocks/${encodeURIComponent(uniqueName)}/settings`,
+    method: 'GET',
+  });
+  if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
+    throw new ApiClientError('Runtime settings API schema mismatch (get-block-settings)', 'PARSE');
+  }
+  return parseRuntimeSettingsObject((payload as { settings?: unknown }).settings, 'get-block-settings.settings');
+}
+
+export async function setBlockSettings(
+  sessionId: string,
+  uniqueName: string,
+  patch: RuntimeSettingsObject,
+  mode: RuntimeSettingsMode = 'staged',
+): Promise<SetBlockSettingsResult> {
+  if (config.controlPlaneMode === 'wasm') {
+    const cp = await getControlPlane();
+    return parseSetBlockSettingsResult(JSON.parse(cp.updateBlockSettings(sessionId, uniqueName, JSON.stringify(patch), mode)));
+  }
+
+  const query = mode === 'immediate' ? '?mode=immediate' : '';
+  const payload = await jsonRequest<unknown>({
+    path: `/sessions/${encodeURIComponent(sessionId)}/blocks/${encodeURIComponent(uniqueName)}/settings${query}`,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  return parseSetBlockSettingsResult(payload);
 }

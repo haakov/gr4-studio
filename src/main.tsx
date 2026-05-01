@@ -8,7 +8,8 @@ import { config } from './lib/config';
 import './styles/index.css';
 
 const queryClient = new QueryClient();
-const Router = window.location.protocol === 'file:' ? HashRouter : BrowserRouter;
+const isFile = window.location.protocol === 'file:';
+const Router = isFile ? HashRouter : BrowserRouter;
 
 type DesktopBootStatus = {
   phase: 'starting' | 'waiting-backend' | 'ready' | 'error';
@@ -184,7 +185,7 @@ function AppBootstrap() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <Router>
+      <Router {...(!isFile && config.controlPlaneMode !== 'wasm' && { basename: '/gr4_gui' })}>
         <ReactFlowProvider>
           <AppRoutes />
         </ReactFlowProvider>
